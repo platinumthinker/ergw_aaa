@@ -78,10 +78,35 @@ invoke_provider(F, A,
     {Reply, PState1} = apply(Provider, F, A ++ [State, PState]),
     {Reply, State#{'AuthProviderState' := PState1}}.
 
+get_aaa_application_provider(AcctAppId) ->
+    case setup:get_env(ergw_aaa, providers) of
+	{ok, Providers} when is_list(Providers) ->
+	    case lists:keyfind(AcctAppId, 1, Providers) of
+		{AcctAppId, Provider, ProviderOpts} ->
+		    {ok, {Provider, ProviderOpts}};
+		_ ->
+		    not_found
+	    end;
+	_ ->
+	    not_found
+    end.
+
 init_provider(State = #{'AuthProvider' := _Provider}) ->
     {ok, State};
 init_provider(State) ->
-    {ok, {Provider, ProviderOpts}} = setup:get_env(ergw_aaa, ergw_aaa_provider),
+    AcctAppId = maps:get('AAA-Application-Id', State, default),
+    {Provider, ProviderOpts} =
+	case get_aaa_application_provider(AcctAppId) of
+	    {ok, {_, _} = Opts} ->
+		Opts;
+	    _ ->
+		case setup:get_env(ergw_aaa, ergw_aaa_provider) of
+		    {ok, {_, _} = Opts} ->
+			Opts;
+		    _ ->
+			{ergw_aaa_provider, {ergw_aaa_mock, [{shared_secret, <<"MySecret">>}]}}
+		end
+	end,
 
     case Provider:init(ProviderOpts) of
         {ok, PState} ->
