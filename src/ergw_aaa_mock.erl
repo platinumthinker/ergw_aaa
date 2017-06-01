@@ -45,6 +45,7 @@ copy_session_id(_, Opts) ->
 
 start_authentication(From, Session, State = #state{shared_secret = Secret}) ->
     SessionOpts = copy_session_id(Session, to_session([{'TLS-Pre-Shared-Key', Secret}])),
+    lager:info("MOCK: Authenticate: ~p", [Session]),
     Verdict = success,
     ?queue_event(From, {'AuthenticationRequestReply', {Verdict, SessionOpts, State}}),
     {ok, State}.

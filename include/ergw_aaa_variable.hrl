@@ -8,6 +8,7 @@
 -record(var, {
 	  name     :: term(),
 	  type     :: atom(),
+	  init_ts  :: integer(),
 	  value    :: term(),
 	  triggers :: [any()]
 }).

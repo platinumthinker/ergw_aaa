@@ -10,7 +10,8 @@
 -compile({parse_transform, cut}).
 
 -export([now_ms/0, now_ms/1]).
--export([new/4, set/2, get/1, update/2, stop_timers/1, rearm_timer/1, clear_triggers/1]).
+-export([new/4, set/2, get/1, update/2, stop_timers/1, rearm_timer/1,
+	 add_triggers/2, clear_triggers/1]).
 
 -include("include/ergw_aaa_variable.hrl").
 
@@ -20,7 +21,7 @@
 
 %% now in milliseconds
 now_ms() ->
-    erlang:system_time(milli_seconds).
+    erlang:monotonic_time(milli_seconds).
 
 now_ms({MegaSecs,Secs,MicroSecs}) ->
         MegaSecs * 1000000000 + Secs * 1000 + round(MicroSecs / 1000.0).
@@ -28,13 +29,21 @@ now_ms({MegaSecs,Secs,MicroSecs}) ->
 new(Name, Type, Value, TriggerDefs) ->
     Now = now_ms(),
     Triggers = lists:map(init_trigger(Now, Name, Type, Value, _), TriggerDefs),
-    #var{name = Name, type = Type, value = Value, triggers = Triggers}.
+    #var{name = Name, type = Type, init_ts = Now, value = Value, triggers = Triggers}.
+
+set(Variable = #var{type = Type, name = Name, value = OldValue, triggers = Triggers}, NewValue)
+  when Type == timer andalso NewValue == 0 ->
+    Now = now_ms(),
+    NewTriggers = lists:map(process_trigger(Now, Name, Type, OldValue, Now, _), Triggers),
+    Variable#var{type = Type, init_ts = Now, value = NewValue, triggers = NewTriggers};
 
 set(Variable = #var{type = Type, name = Name, value = OldValue, triggers = Triggers}, NewValue) ->
     Now = now_ms(),
     NewTriggers = lists:map(process_trigger(Now, Name, Type, OldValue, NewValue, _), Triggers),
     Variable#var{type = Type, value = NewValue, triggers = NewTriggers}.
 
+get(#var{type = timer, init_ts = StartTime}) ->
+    now_ms() - StartTime;
 get(#var{value = Value}) ->
     Value.
 
@@ -47,11 +56,18 @@ stop_timers(Var0 = #var{triggers = Triggers0}) ->
     {Triggers, Var} = lists:mapfoldl(stop_timer(Now, _, _), Var0, Triggers0),
     Var#var{triggers = Triggers}.
 
-rearm_timer(Var0 = #var{type = Type, name = Name, triggers = Triggers0}) ->
+rearm_timer(Var0 = #var{type = Type, name = Name, value = Value, triggers = Triggers0}) ->
     Now = now_ms(),
     {TriggerDefs, Var} = lists:mapfoldl(stop_timer(Now, _, _), Var0, Triggers0),
-    Triggers1 = lists:map(init_trigger(Now, Name, Type, 0, _), TriggerDefs),
+    Triggers1 = lists:map(init_trigger(Now, Name, Type, Value, _), TriggerDefs),
     Var#var{triggers = Triggers1}.
+
+add_triggers(Var = #var{type = Type, name = Name, init_ts = StartTime, triggers = Triggers}, TriggerDefs) ->
+    Now = now_ms(),
+    Value = Now - StartTime,
+    Var#var{triggers =
+		lists:foldl(fun(Trigger, Acc) -> [init_trigger(Now, Name, Type, Value, Trigger)|Acc] end,
+			    Triggers, TriggerDefs)}.
 
 clear_triggers(Var = #var{triggers = Triggers}) ->
     lists:foreach(clear_trigger(_), Triggers),
@@ -88,13 +104,21 @@ cancel_timer(Ref) ->
             RemainingTime
     end.
 
-init_trigger(Now, Name, timer, _Value, {Event, limit, TimeOut}) ->
-    TimerRef = start_timer(TimeOut, Name, Event),
+init_trigger(Now, Name, timer, Value, {Event, limit, TimeOut})
+  when Value > TimeOut ->
+    %% timer already expired, fake a timeout event
+    lager:debug("init_trigger: faking timeout"),
+    TimerRef = make_ref(),
+    self() ! {timeout, TimerRef, {'$trigger', Name, Event}},
+    {Event, limit, TimeOut, Now, TimerRef};
+init_trigger(Now, Name, timer, Value, {Event, limit, TimeOut}) ->
+    lager:debug("init_trigger: starting trigger for ~w", [TimeOut - Value]),
+    TimerRef = start_timer(TimeOut - Value, Name, Event),
     {Event, limit, TimeOut, Now, TimerRef};
 init_trigger(_Now, _Name, _Type, _Value, Trigger) ->
     Trigger.
 
-stop_timer(Now, _Trigger = {Event, limit, TimeOut, StartTime, TimerRef}, Var = #var{type = timer}) ->
+stop_timer(Now, {Event, limit, TimeOut, StartTime, TimerRef}, Var = #var{type = timer}) ->
     cancel_timer(TimerRef),
     {{Event, limit, TimeOut}, Var#var{value = Now - StartTime}};
 
