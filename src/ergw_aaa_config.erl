@@ -13,7 +13,8 @@
 -export([load_config/1, validate_options/2, validate_options/3]).
 
 -define(DefaultOptions, [{product_name, "erGW-AAA"},
-                         {ergw_aaa_provider, {ergw_aaa_mock, []}}]).
+                         {ergw_aaa_provider, {ergw_aaa_mock, []}},
+			 {apis, []}]).
 
 %%%===================================================================
 %%% API
@@ -48,8 +49,28 @@ validate_option(ergw_aaa_provider, {Handler, Opts} = Value)
 	    throw({error, {options, Value}})
     end,
     {Handler, Handler:validate_options(Opts)};
+
+validate_option(apis, Value)
+  when is_list(Value) ->
+    lists:map(fun validate_handler/1, Value);
+
 validate_option(Opt, Value)
-  when Opt == ergw_aaa_provider ->
+  when Opt == ergw_aaa_provider;
+       Opt == apis ->
     throw({error, {options, {Opt, Value}}});
+
 validate_option(_Opt, Value) ->
     Value.
+
+validate_handler({Handler, Opts} = Value)
+  when is_atom(Handler) ->
+    case code:ensure_loaded(Handler) of
+	{module, _} ->
+	    ok;
+	_ ->
+	    throw({error, {options, Value}})
+    end,
+    {Handler, Handler:validate_options(Opts)};
+
+validate_handler(Value) ->
+    throw({error, {options, Value}}).
