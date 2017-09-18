@@ -7,7 +7,7 @@
 
 -module(ergw_aaa_profile).
 
--export([initialize_provider/1, initialize_apis/1,
+-export([initialize_provider/1,
 	 action/2, action/3, handle_reply/3]).
 
 -include("include/ergw_aaa_profile.hrl").
@@ -25,13 +25,6 @@
 initialize_provider(Config) ->
     {Handler, HandlerOpts} = proplists:get_value(ergw_aaa_provider, Config),
     Handler:initialize_provider(HandlerOpts).
-
-initialize_apis(Config) ->
-    Apis = proplists:get_value(apis, Config),
-    [begin
-	 {ok, SupSpecs} = API:initialize_api(Opts),
-	 SupSpecs
-     end || {API, Opts} <- Apis].
 
 action('Authenticate', State) ->
     lager:debug("Event: Authenticate ~p", [State]),
